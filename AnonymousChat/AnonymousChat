@@ -1,0 +1,847 @@
+from flask import Flask, request, jsonify, session
+import secrets
+import string
+from datetime import datetime
+
+app = Flask(__name__)
+app.secret_key = "change-this-secret-key"
+
+messages = []
+users = {}
+
+
+def generate_id():
+    characters = string.ascii_uppercase + string.digits
+    return "AC-" + "".join(secrets.choice(characters) for _ in range(6))
+
+
+@app.route("/")
+def home():
+    if "anonymous_id" not in session:
+        anonymous_id = generate_id()
+
+        while anonymous_id in users:
+            anonymous_id = generate_id()
+
+        session["anonymous_id"] = anonymous_id
+
+        users[anonymous_id] = {
+            "joined": datetime.now().strftime("%H:%M")
+        }
+
+    return HTML
+
+
+@app.route("/my_id")
+def my_id():
+    return jsonify({
+        "id": session["anonymous_id"]
+    })
+
+
+# -------------------------
+# GROUP CHAT
+# -------------------------
+
+@app.route("/send_group", methods=["POST"])
+def send_group():
+
+    data = request.get_json()
+    message = data.get("message", "").strip()
+
+    if not message:
+        return jsonify({"error": "Empty message"}), 400
+
+    anonymous_id = session.get("anonymous_id")
+
+    if not anonymous_id:
+        return jsonify({"error": "No Anonymous ID"}), 400
+
+    messages.append({
+        "type": "group",
+        "id": anonymous_id,
+        "message": message,
+        "time": datetime.now().strftime("%H:%M")
+    })
+
+    return jsonify({"success": True})
+
+
+@app.route("/group_messages")
+def group_messages():
+
+    return jsonify([
+        m for m in messages
+        if m["type"] == "group"
+    ])
+
+
+# -------------------------
+# PRIVATE CHAT
+# -------------------------
+
+@app.route("/check_id/<target_id>")
+def check_id(target_id):
+
+    target_id = target_id.upper()
+
+    return jsonify({
+        "exists": target_id in users
+    })
+
+
+@app.route("/send_private", methods=["POST"])
+def send_private():
+
+    data = request.get_json()
+
+    target_id = data.get("target_id", "").upper()
+    message = data.get("message", "").strip()
+
+    sender_id = session.get("anonymous_id")
+
+    if not sender_id:
+        return jsonify({"error": "No Anonymous ID"}), 400
+
+    if target_id not in users:
+        return jsonify({"error": "That Anonymous ID does not exist"}), 404
+
+    if not message:
+        return jsonify({"error": "Empty message"}), 400
+
+    if target_id == sender_id:
+        return jsonify({"error": "You cannot message yourself"}), 400
+
+    messages.append({
+        "type": "private",
+        "sender": sender_id,
+        "receiver": target_id,
+        "message": message,
+        "time": datetime.now().strftime("%H:%M")
+    })
+
+    return jsonify({"success": True})
+
+
+@app.route("/private_messages/<target_id>")
+def private_messages(target_id):
+
+    my_id = session.get("anonymous_id")
+    target_id = target_id.upper()
+
+    private = []
+
+    for m in messages:
+
+        if m["type"] != "private":
+            continue
+
+        if (
+            m["sender"] == my_id and
+            m["receiver"] == target_id
+        ) or (
+            m["sender"] == target_id and
+            m["receiver"] == my_id
+        ):
+
+            private.append(m)
+
+    return jsonify(private)
+
+
+@app.route("/users")
+def get_users():
+
+    return jsonify({
+        "online": len(users)
+    })
+
+
+# -------------------------
+# WEBSITE
+# -------------------------
+
+HTML = """
+<!DOCTYPE html>
+<html>
+
+<head>
+
+<meta charset="UTF-8">
+
+<meta name="viewport"
+content="width=device-width, initial-scale=1.0">
+
+<title>Anonymous Chat</title>
+
+<style>
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: #0f172a;
+    color: white;
+}
+
+header {
+    background: #1e293b;
+    padding: 20px;
+    text-align: center;
+}
+
+header h1 {
+    margin: 0;
+}
+
+header p {
+    color: #94a3b8;
+}
+
+.id-box {
+    background: #172033;
+    padding: 15px;
+    text-align: center;
+}
+
+.id-label {
+    color: #94a3b8;
+    font-size: 13px;
+}
+
+#myID {
+    color: #60a5fa;
+    font-size: 22px;
+    font-weight: bold;
+    margin-top: 5px;
+}
+
+.tabs {
+    display: flex;
+    max-width: 700px;
+    margin: auto;
+}
+
+.tab {
+    flex: 1;
+    padding: 14px;
+    border: none;
+    border-radius: 0;
+    background: #334155;
+    color: white;
+    font-weight: bold;
+}
+
+.tab.active {
+    background: #2563eb;
+}
+
+.chat {
+    max-width: 700px;
+    margin: auto;
+    height: calc(100vh - 260px);
+    display: flex;
+    flex-direction: column;
+}
+
+.chat-title {
+    background: #334155;
+    padding: 12px;
+    text-align: center;
+    font-weight: bold;
+}
+
+#messages,
+#privateMessages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 15px;
+}
+
+.message {
+    background: #1e293b;
+    padding: 12px;
+    margin-bottom: 10px;
+    border-radius: 12px;
+}
+
+.user {
+    color: #60a5fa;
+    font-weight: bold;
+}
+
+.time {
+    color: #64748b;
+    font-size: 11px;
+    margin-left: 8px;
+}
+
+.text {
+    margin-top: 6px;
+    word-wrap: break-word;
+}
+
+.input-area {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    background: #1e293b;
+}
+
+input {
+    flex: 1;
+    padding: 13px;
+    border: none;
+    outline: none;
+    border-radius: 8px;
+    background: #334155;
+    color: white;
+}
+
+button {
+    padding: 13px 16px;
+    border: none;
+    border-radius: 8px;
+    background: #2563eb;
+    color: white;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.private-id {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    background: #172033;
+}
+
+.private-id input {
+    flex: 1;
+}
+
+.status {
+    text-align: center;
+    padding: 8px;
+    font-size: 13px;
+    color: #4ade80;
+}
+
+.hidden {
+    display: none;
+}
+
+@media (max-width: 600px) {
+
+    .chat {
+        height: calc(100vh - 280px);
+    }
+
+    .input-area {
+        padding: 8px;
+    }
+
+    button {
+        padding: 13px;
+    }
+}
+
+</style>
+
+</head>
+
+<body>
+
+
+<header>
+
+<h1>🕵️ Anonymous Chat</h1>
+
+<p>No real name required</p>
+
+</header>
+
+
+<div class="id-box">
+
+<div class="id-label">
+YOUR ANONYMOUS ID
+</div>
+
+<div id="myID">
+Creating...
+</div>
+
+</div>
+
+
+<div class="tabs">
+
+<button
+class="tab active"
+onclick="showGroup()">
+
+🌎 Group Chat
+
+</button>
+
+<button
+class="tab"
+onclick="showPrivate()">
+
+🔒 Private Chat
+
+</button>
+
+</div>
+
+
+<!-- GROUP CHAT -->
+
+<div id="groupChat" class="chat">
+
+<div class="chat-title">
+
+🌎 MAIN GROUP CHAT
+
+<br>
+
+👥 <span id="online">0</span> users online
+
+</div>
+
+
+<div id="messages"></div>
+
+
+<div class="input-area">
+
+<input
+id="groupInput"
+type="text"
+placeholder="Message everyone..."
+maxlength="500">
+
+<button onclick="sendGroup()">
+Send
+</button>
+
+</div>
+
+</div>
+
+
+<!-- PRIVATE CHAT -->
+
+<div id="privateChat" class="chat hidden">
+
+<div class="private-id">
+
+<input
+id="targetID"
+type="text"
+placeholder="Enter Anonymous ID">
+
+<button onclick="startPrivate()">
+Chat
+</button>
+
+</div>
+
+
+<div id="privateStatus"
+class="status">
+
+Enter someone's ID to start a private chat.
+
+</div>
+
+
+<div id="privateMessages"></div>
+
+
+<div class="input-area">
+
+<input
+id="privateInput"
+type="text"
+placeholder="Private message..."
+maxlength="500">
+
+<button onclick="sendPrivate()">
+Send
+</button>
+
+</div>
+
+</div>
+
+
+<script>
+
+let myID = "";
+
+let privateTarget = "";
+
+
+/* GET MY AUTOMATIC ID */
+
+async function getID() {
+
+    const response =
+        await fetch("/my_id");
+
+    const data =
+        await response.json();
+
+    myID = data.id;
+
+    document.getElementById("myID")
+        .textContent = myID;
+}
+
+
+/* GROUP CHAT */
+
+async function sendGroup() {
+
+    const input =
+        document.getElementById("groupInput");
+
+    const message =
+        input.value.trim();
+
+    if (!message) return;
+
+    await fetch("/send_group", {
+
+        method: "POST",
+
+        headers: {
+            "Content-Type": "application/json"
+        },
+
+        body: JSON.stringify({
+            message: message
+        })
+
+    });
+
+    input.value = "";
+
+    loadGroup();
+}
+
+
+async function loadGroup() {
+
+    const response =
+        await fetch("/group_messages");
+
+    const data =
+        await response.json();
+
+    const box =
+        document.getElementById("messages");
+
+    box.innerHTML = "";
+
+    data.forEach(msg => {
+
+        const div =
+            document.createElement("div");
+
+        div.className = "message";
+
+        div.innerHTML =
+            "<span class='user'>" +
+            escapeHTML(msg.id) +
+            "</span>" +
+
+            "<span class='time'>" +
+            escapeHTML(msg.time) +
+            "</span>" +
+
+            "<div class='text'>" +
+            escapeHTML(msg.message) +
+            "</div>";
+
+        box.appendChild(div);
+
+    });
+
+    box.scrollTop = box.scrollHeight;
+}
+
+
+/* START PRIVATE CHAT */
+
+async function startPrivate() {
+
+    const input =
+        document.getElementById("targetID");
+
+    const target =
+        input.value.trim().toUpperCase();
+
+    if (!target) return;
+
+    const response =
+        await fetch("/check_id/" + target);
+
+    const data =
+        await response.json();
+
+    if (!data.exists) {
+
+        document.getElementById("privateStatus")
+            .textContent =
+            "❌ That Anonymous ID was not found.";
+
+        document.getElementById("privateStatus")
+            .style.color = "#f87171";
+
+        return;
+    }
+
+    privateTarget = target;
+
+    document.getElementById("privateStatus")
+        .textContent =
+        "🔒 Private chat with " + target;
+
+    document.getElementById("privateStatus")
+        .style.color = "#4ade80";
+
+    loadPrivate();
+}
+
+
+/* SEND PRIVATE MESSAGE */
+
+async function sendPrivate() {
+
+    if (!privateTarget) {
+
+        alert("Enter an Anonymous ID first.");
+
+        return;
+    }
+
+    const input =
+        document.getElementById("privateInput");
+
+    const message =
+        input.value.trim();
+
+    if (!message) return;
+
+    const response =
+        await fetch("/send_private", {
+
+            method: "POST",
+
+            headers: {
+                "Content-Type": "application/json"
+            },
+
+            body: JSON.stringify({
+
+                target_id: privateTarget,
+
+                message: message
+
+            })
+
+        });
+
+    const data =
+        await response.json();
+
+    if (data.error) {
+
+        alert(data.error);
+
+        return;
+    }
+
+    input.value = "";
+
+    loadPrivate();
+}
+
+
+/* LOAD PRIVATE MESSAGES */
+
+async function loadPrivate() {
+
+    if (!privateTarget) return;
+
+    const response =
+        await fetch(
+            "/private_messages/" +
+            privateTarget
+        );
+
+    const data =
+        await response.json();
+
+    const box =
+        document.getElementById("privateMessages");
+
+    box.innerHTML = "";
+
+    data.forEach(msg => {
+
+        const div =
+            document.createElement("div");
+
+        div.className = "message";
+
+        div.innerHTML =
+            "<span class='user'>" +
+            escapeHTML(msg.sender) +
+            "</span>" +
+
+            "<span class='time'>" +
+            escapeHTML(msg.time) +
+            "</span>" +
+
+            "<div class='text'>" +
+            escapeHTML(msg.message) +
+            "</div>";
+
+        box.appendChild(div);
+
+    });
+
+    box.scrollTop = box.scrollHeight;
+}
+
+
+/* ONLINE USERS */
+
+async function updateUsers() {
+
+    const response =
+        await fetch("/users");
+
+    const data =
+        await response.json();
+
+    document.getElementById("online")
+        .textContent = data.online;
+}
+
+
+/* SWITCH TO GROUP */
+
+function showGroup() {
+
+    document.getElementById("groupChat")
+        .classList.remove("hidden");
+
+    document.getElementById("privateChat")
+        .classList.add("hidden");
+
+}
+
+
+/* SWITCH TO PRIVATE */
+
+function showPrivate() {
+
+    document.getElementById("groupChat")
+        .classList.add("hidden");
+
+    document.getElementById("privateChat")
+        .classList.remove("hidden");
+
+}
+
+
+/* SECURITY */
+
+function escapeHTML(text) {
+
+    const div =
+        document.createElement("div");
+
+    div.textContent = text;
+
+    return div.innerHTML;
+}
+
+
+/* ENTER TO SEND */
+
+document.getElementById("groupInput")
+.addEventListener("keydown", function(e) {
+
+    if (e.key === "Enter") {
+        sendGroup();
+    }
+
+});
+
+
+document.getElementById("privateInput")
+.addEventListener("keydown", function(e) {
+
+    if (e.key === "Enter") {
+        sendPrivate();
+    }
+
+});
+
+
+/* START */
+
+getID();
+
+loadGroup();
+
+updateUsers();
+
+setInterval(loadGroup, 1000);
+
+setInterval(updateUsers, 2000);
+
+setInterval(loadPrivate, 1000);
+
+</script>
+
+</body>
+
+</html>
+"""
+
+
+if __name__ == "__main__":
+    app.run(
+        host="0.0.0.0",
+        port=5000,
+        debug=True
+    )
+{
+  "mcpServers": {
+    "render": {
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "RENDER_API_KEY",
+        "-v",
+        "render-mcp-server-config:/config",
+        "ghcr.io/render-oss/render-mcp-server"
+      ],
+      "env": {
+        "RENDER_API_KEY": "<YOUR_API_KEY>"
+      }
+    }
+  }
+}
